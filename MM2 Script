@@ -12,7 +12,7 @@ local main = GUI:CreateWindow({
     SubTitle = "MM2",
     Icon = "moon",
     TabWidth = 50,
-    Size = UDimSize,
+    Size = UDimSize,2
     Theme = "supernova",
     MinimizeKey = Enum.KeyCode.M
 })
@@ -85,25 +85,25 @@ local sheriffConfig = {
     PingPrediction = true,
     PingSensitivity = 1.18,
     JumpPrediction = true,
-    HorizontalMultiplier = 0.79,
-    VerticalMultiplier = 0.79,
+    HorizontalMultiplier = 1.00,
+    VerticalMultiplier = 1.00,
     HorizontalDivisorMin = 10.00,
     HorizontalDivisorMax = 12.00,
     MaxPredictionDistance = 350.00,
-    DistanceFactor = 12.00,
-    VerticalDistanceScale = 10.50,
-    LeadTime = 0.12,
+    DistanceFactor = 5.00,
+    VerticalDistanceScale = 2.00,
+    LeadTime = 0.05,
     XMultiplier = 0.00,
-    ZMultiplier = -0.01,
+    ZMultiplier = 0.00,
     UnequipAfterShot = false
 }
 
 -- Configurações Hitbox
 local hitboxConfig = {
     enabled = false,
-    size = 5,
+    size = 10,
     visible = true,
-    transparency = 0.8,
+    transparency = 0.5,
     color = Color3.fromRGB(255, 0, 80)
 }
 
@@ -130,7 +130,6 @@ local MURDER_CACHE_TIME = 0.3
 local MY_SPEED = 16
 local MY_JUMP = 50
 local noclipActive = false
-local godModeActive = false
 
 -- Cache ESP
 local espConnections = {}
@@ -547,106 +546,183 @@ local function AtualizarTamanhoBotao()
     end
 end
 
--- ==================== HITBOX SYSTEM (MURDER) ====================
+-- ==================== HITBOX SYSTEM (NOVO - DO ZERO) ====================
 
-local hitboxESP_Folder = nil
-local hitboxRunning = false
+local hitboxParts = {}
+local hitboxConnections = {}
 local originalSizes = {}
 
-local function setupHitboxSystem()
-    if not hitboxESP_Folder then
-        hitboxESP_Folder = Instance.new("Folder", game:GetService("CoreGui"))
-        hitboxESP_Folder.Name = "MoonHub_Hitbox_ESP"
+local function createHitboxForPlayer(player)
+    if player == LocalPlayer then return end
+    if not player.Character then return end
+    
+    local character = player.Character
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    local playerName = player.Name
+    
+    -- Salva tamanho original do HRP
+    if not originalSizes[playerName] then
+        originalSizes[playerName] = hrp.Size
+    end
+    
+    -- MODIFICA O HRP DIRETAMENTE (isso que faz funcionar!)
+    hrp.Size = Vector3.new(hitboxConfig.size, hitboxConfig.size, hitboxConfig.size)
+    hrp.Transparency = 0.9  -- Quase invisível mas ainda renderiza
+    hrp.Material = Enum.Material.ForceField
+    hrp.CanCollide = false
+    
+    -- Cria visualização (BoxHandleAdornment)
+    -- Remove visual antigo se existir
+    local oldVisual = hrp:FindFirstChild("HitboxVisual")
+    if oldVisual then oldVisual:Destroy() end
+    
+    if hitboxConfig.visible then
+        local box = Instance.new("BoxHandleAdornment")
+        box.Name = "HitboxVisual"
+        box.Adornee = hrp
+        box.Size = hrp.Size
+        box.Color3 = hitboxConfig.color
+        box.Transparency = hitboxConfig.transparency
+        box.AlwaysOnTop = true
+        box.ZIndex = 1
+        box.Parent = hrp
+    end
+    
+    hitboxParts[playerName] = hrp
+end
+
+local function updateAllHitboxes()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                -- Atualiza tamanho do HRP
+                local newSize = Vector3.new(hitboxConfig.size, hitboxConfig.size, hitboxConfig.size)
+                if hrp.Size ~= newSize then
+                    hrp.Size = newSize
+                    hrp.Transparency = 0.9
+                    hrp.Material = Enum.Material.ForceField
+                    hrp.CanCollide = false
+                end
+                
+                -- Atualiza visual
+                local visual = hrp:FindFirstChild("HitboxVisual")
+                if hitboxConfig.visible then
+                    if not visual then
+                        visual = Instance.new("BoxHandleAdornment")
+                        visual.Name = "HitboxVisual"
+                        visual.Adornee = hrp
+                        visual.AlwaysOnTop = true
+                        visual.ZIndex = 1
+                        visual.Parent = hrp
+                    end
+                    visual.Size = hrp.Size
+                    visual.Color3 = hitboxConfig.color
+                    visual.Transparency = hitboxConfig.transparency
+                else
+                    if visual then
+                        visual:Destroy()
+                    end
+                end
+            else
+                -- Recria se não existe
+                createHitboxForPlayer(player)
+            end
+        end
     end
 end
 
-local function CreateHitboxBox(targetPlayer)
-    local name = "HITBOX_" .. targetPlayer.Name
-    local box = Instance.new("BoxHandleAdornment")
-    box.Name = name
-    box.Parent = hitboxESP_Folder
-    box.AlwaysOnTop = true
-    box.ZIndex = 10
-    box.Transparency = hitboxConfig.transparency
-    box.Color3 = hitboxConfig.color
-    box.Size = Vector3.new(hitboxConfig.size, hitboxConfig.size, hitboxConfig.size)
-    return box
-end
-
 local function startHitbox()
-    if hitboxRunning then return end
-
-    setupHitboxSystem()
-    hitboxRunning = true
-
-    functions.createconnection("Hitbox_Loop", "RenderStepped", function()
-        if not hitboxConfig.enabled then return end
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and p.Character then
-                local root = p.Character:FindFirstChild("HumanoidRootPart")
-                if root then
-                    -- Salva tamanho original na primeira vez
-                    if not originalSizes[p.Name] then
-                        originalSizes[p.Name] = root.Size
-                    end
-
-                    -- Aumenta o HRP (hitbox real usada pelo servidor)
-                    root.Size = Vector3.new(hitboxConfig.size, hitboxConfig.size, hitboxConfig.size)
-                    root.CanCollide = false
-                    root.Transparency = 1
-
-                    -- Visual ESP (BoxHandleAdornment)
-                    local esp = hitboxESP_Folder:FindFirstChild("HITBOX_" .. p.Name)
-                        or CreateHitboxBox(p)
-
-                    if hitboxConfig.visible then
-                        esp.Adornee = root
-                        esp.Size = Vector3.new(hitboxConfig.size, hitboxConfig.size, hitboxConfig.size)
-                        esp.Color3 = hitboxConfig.color
-                        esp.Transparency = hitboxConfig.transparency
-                        esp.Visible = true
-                    else
-                        esp.Visible = false
-                    end
-                end
+    -- Cria hitbox para todos os jogadores atuais
+    for _, player in ipairs(Players:GetPlayers()) do
+        createHitboxForPlayer(player)
+    end
+    
+    -- Monitora novos jogadores
+    hitboxConnections.playerAdded = Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if hitboxConfig.enabled then
+                createHitboxForPlayer(player)
             end
+        end)
+    end)
+    
+    -- Monitora respawn de jogadores existentes
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            hitboxConnections[player.Name] = player.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if hitboxConfig.enabled then
+                    createHitboxForPlayer(player)
+                end
+            end)
+        end
+    end
+    
+    -- Loop de manutenção (mantém HRP expandido)
+    hitboxConnections.heartbeat = RunService.Heartbeat:Connect(function()
+        if hitboxConfig.enabled then
+            updateAllHitboxes()
         end
     end)
-
-    -- Cleanup quando player sair
-    Players.PlayerRemoving:Connect(function(p)
-        if hitboxESP_Folder then
-            local oldEsp = hitboxESP_Folder:FindFirstChild("HITBOX_" .. p.Name)
-            if oldEsp then oldEsp:Destroy() end
+    
+    -- Cleanup quando jogador sai
+    hitboxConnections.playerRemoving = Players.PlayerRemoving:Connect(function(player)
+        local playerName = player.Name
+        
+        -- Restaura tamanho original
+        if player.Character then
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and originalSizes[playerName] then
+                hrp.Size = originalSizes[playerName]
+                hrp.Transparency = 1
+                hrp.CanCollide = false
+            end
         end
-        originalSizes[p.Name] = nil
+        
+        originalSizes[playerName] = nil
+        hitboxParts[playerName] = nil
+        
+        if hitboxConnections[playerName] then
+            hitboxConnections[playerName]:Disconnect()
+            hitboxConnections[playerName] = nil
+        end
     end)
 end
 
 local function stopHitbox()
-    hitboxRunning = false
-    hitboxConfig.enabled = false
-    functions.closeconnection("Hitbox_Loop")
-
-    -- Limpar ESP visual
-    if hitboxESP_Folder then
-        for _, esp in ipairs(hitboxESP_Folder:GetChildren()) do
-            esp:Destroy()
+    -- Desconecta todos os eventos
+    for name, conn in pairs(hitboxConnections) do
+        if conn and conn.Disconnect then
+            pcall(function() conn:Disconnect() end)
         end
     end
-
-    -- Restaurar tamanho original dos HRPs
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
-            local root = p.Character:FindFirstChild("HumanoidRootPart")
-            if root then
-                root.Size = originalSizes[p.Name] or Vector3.new(2, 2, 1)
-                root.CanCollide = false
-                root.Transparency = 1
-            end
+    hitboxConnections = {}
+    
+    -- Restaura todos os HRPs ao tamanho original
+    for playerName, hrp in pairs(hitboxParts) do
+        if hrp and hrp.Parent then
+            pcall(function()
+                -- Remove visual
+                local visual = hrp:FindFirstChild("HitboxVisual")
+                if visual then visual:Destroy() end
+                
+                -- Restaura tamanho
+                if originalSizes[playerName] then
+                    hrp.Size = originalSizes[playerName]
+                else
+                    hrp.Size = Vector3.new(2, 2, 1) -- Tamanho padrão
+                end
+                hrp.Transparency = 1
+                hrp.CanCollide = false
+            end)
         end
     end
-
+    
+    hitboxParts = {}
     originalSizes = {}
 end
 
@@ -964,29 +1040,6 @@ local function stopNoClip()
     end
 end
 
--- ==================== GOD MODE ====================
-
-local function startGodMode()
-    godModeActive = true
-    
-    functions.createconnection("GodMode", "Heartbeat", function()
-        if not godModeActive then return end
-        
-        local char = LocalPlayer.Character
-        if not char then return end
-        
-        local humanoid = char:FindFirstChild("Humanoid")
-        if humanoid then
-            humanoid.Health = humanoid.MaxHealth
-        end
-    end)
-end
-
-local function stopGodMode()
-    godModeActive = false
-    functions.closeconnection("GodMode")
-end
-
 -- ==================== SPEED & JUMP ====================
 
 local function setSpeed(value)
@@ -1167,7 +1220,7 @@ do
     sheriffTab:AddSlider("HorizontalMultiplier", {
         Title = "Horizontal Multiplier",
         Description = "Adjust horizontal prediction strength",
-        Default = 0.79,
+        Default = 1.00,
         Min = 0.1,
         Max = 2.0,
         Rounding = 2,
@@ -1179,7 +1232,7 @@ do
     sheriffTab:AddSlider("VerticalMultiplier", {
         Title = "Vertical Multiplier",
         Description = "Adjust vertical prediction strength",
-        Default = 0.79,
+        Default = 1.00,
         Min = 0.1,
         Max = 2.0,
         Rounding = 2,
@@ -1191,7 +1244,7 @@ do
     sheriffTab:AddSlider("LeadTime", {
         Title = "Lead Time",
         Description = "Base prediction time (seconds)",
-        Default = 0.12,
+        Default = 0.05,
         Min = 0.05,
         Max = 0.30,
         Rounding = 2,
@@ -1203,7 +1256,7 @@ do
     sheriffTab:AddSlider("DistanceFactor", {
         Title = "Distance Factor",
         Description = "Distance-based prediction adjustment",
-        Default = 12.00,
+        Default = 5.00,
         Min = 1,
         Max = 30,
         Rounding = 2,
@@ -1215,7 +1268,7 @@ do
     sheriffTab:AddSlider("VerticalDistanceScale", {
         Title = "Vertical Distance Scale",
         Description = "Vertical adjustment for long range",
-        Default = 10.50,
+        Default = 2.00,
         Min = 1,
         Max = 20,
         Rounding = 2,
@@ -1251,7 +1304,7 @@ do
     sheriffTab:AddSlider("ZMultiplier", {
         Title = "Z Multiplier",
         Description = "Fine-tune Z axis offset",
-        Default = -0.01,
+        Default = 0.00,
         Min = -1.0,
         Max = 1.0,
         Rounding = 2,
@@ -1265,7 +1318,7 @@ end
 do
     murderTab:AddSection("Murder Tools")
     
-    murderTab:AddSection("Combat Assistance")
+    murderTab:AddSection("Hitbox Expander")
     
     murderTab:AddToggle("ExpandHitbox", {
         Title = "Expand Hitboxes",
@@ -1280,11 +1333,11 @@ do
             end
         end
     })
-
+    
     murderTab:AddSlider("HitboxSize", {
         Title = "Hitbox Size",
         Description = "Size of the expanded hitbox",
-        Default = 5,
+        Default = 10,
         Min = 5,
         Max = 50,
         Rounding = 0,
@@ -1292,20 +1345,20 @@ do
             hitboxConfig.size = value
         end
     })
-
-    murderTab:AddToggle("HitboxVisible", {
+    
+    murderTab:AddToggle("ShowHitbox", {
         Title = "Show Hitbox ESP",
-        Description = "Display visual box around hitbox",
+        Description = "Display visual box around expanded hitbox",
         Default = true,
         Callback = function(value)
             hitboxConfig.visible = value
         end
     })
-
+    
     murderTab:AddSlider("HitboxTransparency", {
         Title = "Hitbox Transparency",
-        Description = "Visual transparency of hitbox",
-        Default = 0.8,
+        Description = "0 = solid, 1 = invisible",
+        Default = 0.5,
         Min = 0.0,
         Max = 1.0,
         Rounding = 2,
@@ -1313,19 +1366,19 @@ do
             hitboxConfig.transparency = value
         end
     })
-
+    
     murderTab:AddColorpicker("HitboxColor", {
         Title = "Hitbox Color",
-        Description = "Color of the hitbox ESP",
+        Description = "Color of the hitbox visualization",
         Default = Color3.fromRGB(255, 0, 80),
         Callback = function(value)
             hitboxConfig.color = value
         end
     })
-
+    
     murderTab:AddParagraph({
-        Title = "Hitbox Info",
-        Content = "Expands player hitboxes making them easier targets. Adjust size, transparency and color to your preference."
+        Title = "How it works",
+        Content = "Creates an invisible expanded hitbox around players that detects hits. Visual box shows the hitbox area."
     })
 end
 
@@ -1368,19 +1421,6 @@ do
                 startNoClip()
             else
                 stopNoClip()
-            end
-        end
-    })
-    
-    playerTab:AddToggle("GodMode", {
-        Title = "God Mode",
-        Description = "Infinite health",
-        Default = false,
-        Callback = function(value)
-            if value then
-                startGodMode()
-            else
-                stopGodMode()
             end
         end
     })
@@ -1526,7 +1566,7 @@ end
 
 -- ==================== CONFIGURAÇÃO FINAL ====================
 
--- Sistema de reset quando personagem spawna
+-- Sistema de reset quando personagem spawna (nova rodada)
 LocalPlayer.CharacterAdded:Connect(function(character)
     -- Aguarda o personagem carregar completamente
     task.wait(0.5)
@@ -1540,6 +1580,18 @@ LocalPlayer.CharacterAdded:Connect(function(character)
     
     -- Limpa histórico de velocidade
     velocityHistory = {}
+    
+    -- Aguarda o Humanoid carregar
+    local humanoid = character:WaitForChild("Humanoid", 5)
+    if humanoid then
+        -- Reaplica velocidade e jump power
+        if MY_SPEED ~= 16 then
+            humanoid.WalkSpeed = MY_SPEED
+        end
+        if MY_JUMP ~= 50 then
+            humanoid.JumpPower = MY_JUMP
+        end
+    end
     
     -- Recria botão se estiver habilitado
     if sheriffConfig.showButton and not botaoTela then
