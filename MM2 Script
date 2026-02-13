@@ -8,11 +8,11 @@ else
 end
 
 local main = GUI:CreateWindow({
-    Title = "MOON running in " .. identifyexecutor(),
+    Title = "MOON running in" .. identifyexecutor(),
     SubTitle = "MM2",
     Icon = "moon",
     TabWidth = 50,
-    Size = UDimSize,2
+    Size = UDimSize,
     Theme = "supernova",
     MinimizeKey = Enum.KeyCode.M
 })
