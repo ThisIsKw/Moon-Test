@@ -8,8 +8,8 @@ else
 end
 
 local main = GUI:CreateWindow({
-    Title = "MOON running in " .. identifyexecutor(),
-    SubTitle = "MM2",
+    Title = "MOON Hub - MM2",
+    SubTitle = "Murder Mystery 2",
     Icon = "moon",
     TabWidth = 50,
     Size = UDimSize,
@@ -139,17 +139,35 @@ local tamanhoBot = 80
 local BOTAO_POS_FILE = "moon/mm2/botao_pos.txt"
 
 local function salvarPosicaoBotao(pos)
+    if type(writefile) ~= "function" then return end
+    local data = string.format("%.6f,%.2f,%.6f,%.2f",
+        pos.X.Scale, pos.X.Offset, pos.Y.Scale, pos.Y.Offset)
+    local saved = false
     pcall(function()
-        local data = string.format("%.6f,%.2f,%.6f,%.2f",
-            pos.X.Scale, pos.X.Offset,
-            pos.Y.Scale, pos.Y.Offset)
+        if type(makefolder) == "function" then
+            pcall(makefolder, "moon")
+            pcall(makefolder, "moon/mm2")
+        end
         writefile(BOTAO_POS_FILE, data)
+        saved = true
     end)
+    if not saved then
+        pcall(writefile, "botao_pos.txt", data)
+    end
 end
 
 local function carregarPosicaoBotao()
-    local ok, data = pcall(readfile, BOTAO_POS_FILE)
-    if not ok or not data or data == "" then return nil end
+    if type(readfile) ~= "function" then return nil end
+    local data = nil
+    pcall(function()
+        data = readfile(BOTAO_POS_FILE)
+    end)
+    if not data or data == "" then
+        pcall(function()
+            data = readfile("botao_pos.txt")
+        end)
+    end
+    if not data or data == "" then return nil end
     local xs, xo, ys, yo = data:match("([^,]+),([^,]+),([^,]+),([^,]+)")
     if not xs then return nil end
     return UDim2.new(tonumber(xs), tonumber(xo), tonumber(ys), tonumber(yo))
@@ -181,6 +199,68 @@ local function DesequiparArmaRapido()
         if hum then
             hum:UnequipTools()
         end
+    end
+end
+
+local getGunAuto = false
+local getGunConn = nil
+
+local function PegarArmaNoChao()
+    local char = game.Players.LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v.Name == "GunDrop" and v:IsA("BasePart") then
+            -- Tenta disparar o TouchInterest da arma diretamente
+            -- Isso simula o toque sem mover o personagem
+            local touchInterest = v:FindFirstChildOfClass("TouchTransmitter")
+                or v:FindFirstChild("TouchInterest")
+
+            if touchInterest then
+                firetouchinterest(root, v, 0)
+                task.wait(0.02)
+                firetouchinterest(root, v, 1)
+                return
+            end
+
+            -- Fallback: mover a ARMA até o player (não o player até a arma)
+            -- Desancora momentaneamente, teleporta para o HRP, re-ancora
+            -- O servidor detecta o toque e faz o pickup normalmente
+            local wasAnchored = v.Anchored
+            v.Anchored = false
+            v.CFrame   = root.CFrame
+            task.wait(0.05)
+            if v and v.Parent then
+                v.Anchored = wasAnchored
+            end
+            return
+        end
+    end
+end
+
+local function startGetGunAuto()
+    if getGunConn then return end
+    -- Verifica se a arma já está no chão no momento em que o toggle é ligado
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v.Name == "GunDrop" and v:IsA("BasePart") then
+            task.wait(0.1)
+            PegarArmaNoChao()
+            break
+        end
+    end
+    getGunConn = workspace.DescendantAdded:Connect(function(v)
+        if getGunAuto and v.Name == "GunDrop" and v:IsA("BasePart") then
+            task.wait(0.1)
+            PegarArmaNoChao()
+        end
+    end)
+end
+
+local function stopGetGunAuto()
+    if getGunConn then
+        getGunConn:Disconnect()
+        getGunConn = nil
     end
 end
 
@@ -570,8 +650,10 @@ local function Atirar()
         local posPredicao = CalcularPredicaoRapida(alvo, alvoAimPos, head.Position)
         if not posPredicao then return end
 
-        local velMag       = alvoVelRaw.Magnitude
-        local sanityLimit  = math.max(40, velMag * totalTime * 1.5)
+        local velMag      = alvo.Velocity.Magnitude
+        local horizDist   = Vector2.new(alvo.Position.X - head.Position.X, alvo.Position.Z - head.Position.Z).Magnitude
+        local tEstimado   = horizDist / BULLET_SPEED
+        local sanityLimit = math.max(40, velMag * tEstimado * 1.5)
         if (posPredicao - alvoAimPos.Position).Magnitude > sanityLimit then
             posPredicao = alvoAimPos.Position
         end
@@ -1526,7 +1608,7 @@ do
 
     sheriffTab:AddSlider("LeadTime", {
         Title = "Lead Time",
-        Description = "Offset fixo alem do ping (0 = so ping)",
+        Description = "Fixed offset beyond ping (0 = ping only)",
         Default = 0.01,
         Min = 0.00,
         Max = 0.15,
@@ -1538,7 +1620,7 @@ do
 
     sheriffTab:AddSlider("BulletSpeed", {
         Title = "Bullet Speed",
-        Description = "Velocidade do projetil (studs/s). Errou atras = aumentar, errou na frente = diminuir",
+        Description = "Projectile speed (studs/s). Miss behind = increase. Miss ahead = decrease.",
         Default = 500,
         Min = 300,
         Max = 800,
@@ -1593,6 +1675,39 @@ do
         Rounding = 2,
         Callback = function(value)
             sheriffConfig.ZMultiplier = value
+        end
+    })
+
+    sheriffTab:AddSection("Get Gun")
+
+    sheriffTab:AddButton({
+        Title       = "Pick Up Gun",
+        Description = "Instantly grab the gun on the ground",
+        Callback    = function()
+            PegarArmaNoChao()
+        end
+    })
+
+    sheriffTab:AddToggle("GetGunAutoToggle", {
+        Title       = "Auto Get Gun",
+        Description = "Automatically grab the gun whenever it drops",
+        Default     = false,
+        Callback    = function(value)
+            getGunAuto = value
+            if value then
+                startGetGunAuto()
+            else
+                stopGetGunAuto()
+            end
+        end
+    })
+
+    sheriffTab:AddKeybind("GetGunKeybind", {
+        Title       = "Get Gun Hotkey",
+        Description = "Hotkey to grab the gun (PC only)",
+        Default     = "G",
+        Callback    = function()
+            PegarArmaNoChao()
         end
     })
 end
@@ -1661,7 +1776,7 @@ do
 
     murderTab:AddParagraph({
         Title = "How it works",
-        Content = "Creates an invisible expanded hitbox around players that detects hits. Visual box shows the hitbox area."
+        Content = "Expands the hitbox of other players for easier hits. Visual box shows the expanded area."
     })
 end
 
@@ -1851,58 +1966,58 @@ end
 game.Players.PlayerRemoving:Connect(function(player)
     local char = player.Character
     if char then
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            velocityHistory[hrp] = nil
-            accelerationHistory[hrp] = nil
-        end
-    end
-end)
+ local hrp = char:FindFirstChild("HumanoidRootPart")
+ se hrp entidade
+ velocidadeHistória[hrp] = nulo
+ aceleraçãoHistória[hrp] = nulo
+ fim
+ fim
+fim)
 
-game.Players.LocalPlayer.CharacterAdded:Connect(function(character)
-    task.wait(0.5)
+jogo.Jogadores.JogadorLocal.PersonagemAdicionado:Conectar(função(personagem)
+ tarefa.esperar(0,5)
 
-    podeAtirar = true
-    equipAttempts = 0
+ podeAtirar = verdadeiro
+ equipAttempts = 0
 
-    velocityHistory = {}
-    accelerationHistory = {}
+ velocidadeHistória = {}
+ aceleraçãoHistória = {}
 
-    local humanoid = character:WaitForChild("Humanoid", 5)
-    if humanoid then
-        if MY_SPEED ~= 16 then
-            humanoid.WalkSpeed = MY_SPEED
-        end
-        if MY_JUMP ~= 50 then
-            humanoid.JumpPower = MY_JUMP
-        end
-        hookHumanoidStats(humanoid)
-    end
+ humanoide local = personagem:WaitForChild("Humanoide", 5)
+ se humanoide então
+ se MINHA_VELOCIDADE ~= 16 entidade
+ humanoide.WalkSpeed = MINHA_VELOCIDADE
+ fim
+ se MEU_SALTO ~= 50 entidade
+ humanoide.JumpPower = MEU_SALTO
+ fim
+ hookHumanoidStats(humanoide)
+ fim
 
-    if sheriffConfig.showButton and not botaoTela then
-        task.wait(0.5)
-        CriarBotaoTela()
-    end
+ se sheriffConfig.showButton e não botaoTela então
+ tarefa.esperar(0,5)
+ CriarBotaoTela()
+ fim
 
-    if noclipActive then
-        cacheNoclipParts()
-    end
+ se noclipActive então
+ cacheNoclipParts()
+ fim
 
-end)
+fim)
 
-podeAtirar = true
+podeAtirar = verdadeiro
 
-local _initChar = game.Players.LocalPlayer.Character
-if _initChar then
-    local _initHum = _initChar:FindFirstChild("Humanoid")
-    if _initHum then hookHumanoidStats(_initHum) end
-end
+local _initChar = jogo.Jogadores.JogadorLocal.Personagem
+se _initChar então
+ local _initHum = _initChar:FindFirstChild("Humanoide")
+ se _initHum então hookHumanoidStats(_initHum) fim
+fim
 
-GUI.SaveManager:SetFolder("moon")
-GUI.SaveManager:SetFolder("moon/mm2")
+GUI.SaveManager:SetFolder("lua")
+GUI.SaveManager:SetFolder("lua/mm2")
 GUI.InterfaceManager:SetLibrary(GUI)
-GUI.InterfaceManager:BuildInterfaceSection(settingsTab)
+GUI.InterfaceManager:BuildInterfaceSection (tabulações de configurações)
 GUI.SaveManager:IgnoreThemeSettings()
 GUI.SaveManager:SetLibrary(GUI)
-GUI.SaveManager:BuildConfigSection(settingsTab)
+GUI.SaveManager:BuildConfigSection(tabulações de configurações)
 GUI.SaveManager:LoadAutoloadConfig()
